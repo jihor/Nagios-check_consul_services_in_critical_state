@@ -6,8 +6,8 @@ use Getopt::Std;
 use LWP::UserAgent;
 use JSON 'decode_json';
 
-my $plugin_name = "Nagios check_http_json";
-my $VERSION = "1.01";
+my $plugin_name = "Nagios check_consul_services_in_critical_state";
+my $VERSION = "1.0.0";
 
 # getopt module config
 $Getopt::Std::STANDARD_HELP_VERSION = 1;
@@ -23,7 +23,7 @@ my $status = EXIT_UNKNOWN;
 
 #parse cmd opts
 my %opts;
-getopts('vU:t:d:', \%opts);
+getopts('vU:t:', \%opts);
 $opts{t} = 5 unless (defined $opts{t});
 if (not (defined $opts{U}) ) {
         print "ERROR: INVALID USAGE\n";
@@ -38,7 +38,7 @@ $ua->protocols_allowed( [ 'http', 'https'] );
 $ua->parse_head(0);
 $ua->timeout($opts{t});
 
-my $response = $ua->get($opts{U});
+my $response = $ua->get($opts{U} . "/v1/health/state/critical");
 
 if ( index($response->header("content-type"), 'application/json') == -1 )
 {
@@ -46,56 +46,13 @@ if ( index($response->header("content-type"), 'application/json') == -1 )
   exit EXIT_CRITICAL;
 }
 
-
-my $json_response;
-
-eval {
-
-  $json_response = decode_json($response->content);
-  print "JSON repsonse decoded successfully.";
-
-  $status = EXIT_OK;
-
-  if ($opts{d}) {
-
-    if ( -e $opts{d}) {
-
-      my $hash_import = do $opts{d};
-      
-      my %attr_check = %{$hash_import};
-
-      my @errors;
-
-      for my $key (sort keys %attr_check) {
-          for my $attr (sort keys %{$attr_check{$key}}) {
-              my $have = $json_response->{products}{$key}{now}{$attr};
-              my $expect = $attr_check{$key}{$attr};
-              push @errors, "For key $key, attribute $attr, expected '$expect', but got '$have'"
-                  unless $have eq $expect;
-          }
-      }
-
-      if (@errors) {
-          print "Errors:\n", map { "$_\n" } @errors;
-          $status = EXIT_CRITICAL;
-      }
-      else {
-          print "Found expected content.";
-          $status = EXIT_OK;
-      } 
-    }
-    else {
-      print "Unable to find data file $opts{d}";
-      $status = EXIT_UNKNOWN;
-    }
-  }
-
-  exit $status;
-
-} or do {
-  print "Unable to decode JSON, invalid response?";
+if ($response->content ne "[]")
+{
+  print "Found services in 'critical' state: ", $response->content;
   exit EXIT_CRITICAL;
-};
+}
+
+exit EXIT_OK;
 
 sub HELP_MESSAGE 
 {
@@ -106,10 +63,9 @@ sub HELP_MESSAGE
         --help      shows this message
         --version   shows version information
 
-        USAGE: $0 -U http://my.url.com [-d sample.data]
+        USAGE: $0 -U http://consul-host:port
 
-        -U          URL to retrieve (http or https)
-        -d          absolute path to data file containing hash to find with JSON response (optional)
+        -U          Consul URL (http or https)
         -t          Timeout in seconds to wait for the URL to load (default 60)
 
 EOHELP
@@ -122,6 +78,8 @@ sub VERSION_MESSAGE
         print <<EOVM
 $plugin_name v. $VERSION
 Copyright 2012, Brian Buchalter, http://www.endpoint.com - Licensed under GPLv2
+Modified  2017, jihor,           http://www.rgs.ru
+
 EOVM
 ;
 }
